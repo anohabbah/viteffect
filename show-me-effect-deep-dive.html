@@ -1,0 +1,991 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Effect 4.0 — Deep Dive</title>
+<style>
+  :root {
+    --bg: #0b0d10; --panel: #13161b; --panel2: #1a1e25; --line: #262b34;
+    --fg: #e6e8eb; --muted: #8b93a1; --accent: #7cc4ff; --ok: #6fdc9b;
+    --warn: #ffcc66; --bad: #ff7a85; --violet: #c49bff;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-padding-top: 16px; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 var(--sans); }
+  .layout { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+  nav { position: sticky; top: 0; height: 100vh; overflow: auto; padding: 28px 18px; border-right: 1px solid var(--line); background: var(--panel); }
+  nav .brand { font-weight: 700; letter-spacing: .02em; margin-bottom: 4px; }
+  nav .ver { color: var(--muted); font: 12px var(--mono); margin-bottom: 22px; }
+  nav a { display: block; color: var(--muted); text-decoration: none; padding: 5px 8px; border-radius: 6px; font-size: 14px; }
+  nav a.active { color: var(--fg); background: var(--panel2); box-shadow: inset 2px 0 var(--accent); }
+  @media (hover: hover) and (pointer: fine) { nav a:hover { color: var(--fg); background: var(--panel2); } }
+  nav a.sub { padding-left: 20px; font-size: 13px; }
+  main { padding: 40px clamp(18px, 5vw, 64px) 120px; max-width: 1100px; }
+  section { margin-bottom: 72px; }
+  h1 { font-size: 30px; margin: 0 0 6px; }
+  h2 { font-size: 24px; margin: 0 0 4px; padding-top: 12px; }
+  h2 .num { color: var(--accent); font-family: var(--mono); margin-right: 10px; }
+  h3 { font-size: 16px; margin: 32px 0 10px; color: var(--accent); }
+  p { margin: 8px 0; }
+  main p, .note { max-width: 72ch; }
+  .lead { color: var(--muted); margin-bottom: 20px; }
+  code { font-family: var(--mono); font-size: .92em; background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
+  pre { margin: 10px 0 16px; padding: 14px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; font: 13px/1.55 var(--mono); }
+  pre code { background: none; padding: 0; }
+  .tk-k { color: var(--violet); } .tk-s { color: var(--ok); } .tk-c { color: var(--muted); font-style: italic; } .tk-e { color: var(--accent); }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card h4 { margin: 0 0 6px; font-size: 14px; }
+  .note { border-left: 3px solid var(--warn); background: #1d1a12; padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 14px 0; font-size: 14px; }
+  .note.v4 { border-color: var(--accent); background: #101b25; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 10px 0 16px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  td code { white-space: nowrap; }
+  .log { font: 12.5px/1.6 var(--mono); background: #07090b; border: 1px dashed var(--line); border-radius: 8px; padding: 10px 14px; color: var(--muted); }
+  .log b { color: var(--ok); font-weight: 500; }
+
+  .try { border-color: #2c4a5a; margin-top: 28px; }
+  .try h4 { color: var(--accent); }
+  .try ul { margin: 6px 0; padding-left: 20px; font-size: 14px; }
+  .try p { font-size: 14px; color: var(--muted); }
+  .try summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .try summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+  /* diagrams */
+  .tree { font: 13px/1.5 var(--mono); }
+  .node { display: inline-block; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel2); margin: 3px 0; }
+  .node.ok { border-color: #2c5a40; color: var(--ok); } .node.bad { border-color: #5a2c32; color: var(--bad); }
+  .node.acc { border-color: #2c4a5a; color: var(--accent); } .node.warn { border-color: #5a4c2c; color: var(--warn); }
+  .children { margin-left: 22px; padding-left: 14px; border-left: 1px dashed var(--line); }
+  .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
+  .flow .arrow { color: var(--muted); }
+  .pill { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel2); font: 13px var(--mono); }
+  .timeline { display: flex; align-items: flex-end; gap: 6px; height: 120px; margin: 16px 0 6px; padding: 0 4px; border-bottom: 1px solid var(--line); }
+  .bar { flex: 1; background: linear-gradient(180deg, var(--accent), #3a6c95); border-radius: 4px 4px 0 0; position: relative; min-width: 18px; }
+  .bar span { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font: 11px var(--mono); color: var(--muted); white-space: nowrap; }
+  .tl-label { display: flex; gap: 6px; font: 11px var(--mono); color: var(--muted); padding: 0 4px; }
+  .tl-label div { flex: 1; text-align: center; min-width: 18px; }
+  .layers { display: grid; gap: 8px; }
+  .layer-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .layer-row .node { text-align: center; min-width: 140px; }
+  .vsep { text-align: center; color: var(--muted); font: 12px var(--mono); }
+  .split { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: center; }
+  .split .mid { color: var(--muted); font: 12px var(--mono); text-align: center; }
+  .split .mid .v { display: none; }
+
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+    main { min-width: 0; }
+    table { display: block; overflow-x: auto; }
+    nav { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 4px; padding: 14px; }
+    nav .brand, nav .ver { width: 100%; margin: 0; }
+    nav a.sub { display: none; }
+    .grid2, .split { grid-template-columns: minmax(0, 1fr); }
+    .split .mid .h { display: none; }
+    .split .mid .v { display: inline; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav id="toc">
+  <div class="brand">Effect deep dive</div>
+  <div class="ver">effect@4.0.0 · examples typechecked</div>
+  <a href="#basics">0 · Basics</a>
+  <a class="sub" href="#bs-model">Effect&lt;A, E, R&gt;</a>
+  <a class="sub" href="#bs-create">Creating</a>
+  <a class="sub" href="#bs-compose">pipe vs gen</a>
+  <a class="sub" href="#bs-fn">Effect.fn</a>
+  <a class="sub" href="#bs-run">Running</a>
+  <a class="sub" href="#bs-data">Option · Result · Match</a>
+  <a href="#runtime">1 · Runtime &amp; fibers</a>
+  <a class="sub" href="#rt-fibers">Fiber tree</a>
+  <a class="sub" href="#rt-exit">Exit &amp; Cause</a>
+  <a class="sub" href="#rt-interrupt">Interruption</a>
+  <a class="sub" href="#rt-resources">Resources</a>
+  <a href="#errors">2 · Errors in depth</a>
+  <a class="sub" href="#er-model">Modeling</a>
+  <a class="sub" href="#er-handle">Handling</a>
+  <a class="sub" href="#er-accum">Accumulating</a>
+  <a href="#layers">3 · Services &amp; Layers</a>
+  <a class="sub" href="#ly-service">Service + layer</a>
+  <a class="sub" href="#ly-graph">Graph &amp; memoization</a>
+  <a class="sub" href="#ly-runtime">ManagedRuntime (Vite)</a>
+  <a href="#sss">4 · Schema · Stream · Schedule</a>
+  <a class="sub" href="#ss-schema">Schema</a>
+  <a class="sub" href="#ss-stream">Stream</a>
+  <a class="sub" href="#ss-schedule">Schedule</a>
+  <a href="#http">5 · http &amp; http-api</a>
+  <a class="sub" href="#ht-client">HttpClient</a>
+  <a class="sub" href="#ht-api">HttpApi</a>
+  <a href="#beta">v4 naming gotchas</a>
+</nav>
+
+<main>
+<h1>Effect 4.0 — under the hood</h1>
+<p class="lead">Start with section 0 if you are new to Effect. Each section covers the mental model first, then the API, then the idiomatic pattern. All code below was typechecked with <code>tsc</code> against the <code>effect@4.0.0</code> in this repo. Each section ends with exercises in <code>exercises/</code>; run them with <code>bun run test</code>.</p>
+
+<!-- ============================ 0 BASICS ============================ -->
+<section id="basics">
+<h2><span class="num">0</span>Basics</h2>
+<p class="lead">Start here. Three ideas carry the whole library: an Effect is a <b>lazy description</b>, its type records <b>what it returns, how it can fail and what it needs</b>, and you compose small effects into bigger ones before running them once.</p>
+
+<h3 id="bs-model">The type: Effect&lt;A, E, R&gt;</h3>
+<div class="grid2">
+  <div class="card">
+    <div class="flow" style="margin:0 0 8px">
+      <span class="pill" style="color:var(--ok);border-color:#2c5a40">A · success</span>
+      <span class="pill" style="color:var(--bad);border-color:#5a2c32">E · error</span>
+      <span class="pill" style="color:var(--accent);border-color:#2c4a5a">R · requirements</span>
+    </div>
+    <table>
+      <tr><td><code>Effect&lt;number&gt;</code></td><td>returns a number, can't fail, needs nothing</td></tr>
+      <tr><td><code>Effect&lt;User, NotFound&gt;</code></td><td>returns a User or fails with NotFound</td></tr>
+      <tr><td><code>Effect&lt;User, NotFound, Users&gt;</code></td><td>…and needs the Users service to run</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Compared to a Promise</h4>
+    <table>
+      <tr><th></th><th>Promise</th><th>Effect</th></tr>
+      <tr><td>Starts</td><td>immediately</td><td>only when run</td></tr>
+      <tr><td>Rerun</td><td>no, result is cached</td><td>yes, runs again each time</td></tr>
+      <tr><td>Error type</td><td><code>any</code></td><td>typed <code>E</code></td></tr>
+      <tr><td>Dependencies</td><td>implicit imports</td><td>typed <code>R</code></td></tr>
+      <tr><td>Cancel</td><td>manual AbortController</td><td>built-in interruption</td></tr>
+    </table>
+  </div>
+</div>
+<script type="text/x-code">let calls = 0
+const tick = Effect.sync(() => ++calls)   // nothing has happened yet
+
+console.log("before run:", calls)
+console.log("run 1:", Effect.runSync(tick), "run 2:", Effect.runSync(tick))</script>
+<div class="log">Output:<br>before run: <b>0</b><br>run 1: <b>1</b> run 2: <b>2</b></div>
+
+<h3 id="bs-create">Creating effects</h3>
+<table>
+  <tr><th>Constructor</th><th>Wraps</th><th>Result type</th></tr>
+  <tr><td><code>Effect.succeed(42)</code></td><td>a plain value</td><td><code>Effect&lt;number&gt;</code></td></tr>
+  <tr><td><code>Effect.fail(err)</code></td><td>an expected error</td><td><code>Effect&lt;never, Err&gt;</code></td></tr>
+  <tr><td><code>Effect.sync(() =&gt; …)</code></td><td>sync code that won't throw</td><td><code>Effect&lt;A&gt;</code></td></tr>
+  <tr><td><code>Effect.try({ try, catch })</code></td><td>sync code that may throw</td><td><code>Effect&lt;A, E&gt;</code></td></tr>
+  <tr><td><code>Effect.promise(() =&gt; …)</code></td><td>a Promise that won't reject</td><td><code>Effect&lt;A&gt;</code></td></tr>
+  <tr><td><code>Effect.tryPromise({ try, catch })</code></td><td>a Promise that may reject</td><td><code>Effect&lt;A, E&gt;</code></td></tr>
+  <tr><td><code>Effect.sleep("1 second")</code></td><td>a delay</td><td><code>Effect&lt;void&gt;</code></td></tr>
+  <tr><td><code>Effect.fromOption(opt)</code></td><td>an Option</td><td><code>Effect&lt;A, NoSuchElementError&gt;</code></td></tr>
+</table>
+<script type="text/x-code">const parsed = Effect.try({
+  try: () => JSON.parse(text),
+  catch: () => "BadJson" as const,             // turns the thrown value into a typed error
+})
+
+const response = Effect.tryPromise({
+  try: (signal) => fetch("/api/user", { signal }),   // signal aborts fetch when the fiber is interrupted
+  catch: () => "NetworkError" as const,
+})</script>
+<div class="note">If <code>Effect.sync</code> or <code>Effect.promise</code> throws or rejects anyway, the failure becomes a <b>defect</b> (an untyped crash), not an <code>E</code>. Use the <code>try*</code> variants for anything that can fail.</div>
+
+<h3 id="bs-compose">Composing: pipe and gen are two styles for the same thing</h3>
+<div class="grid2">
+<div>
+<p><b>pipe</b>: a chain of operators. Good for short transformations and for adding retries, timeouts and logging.</p>
+<script type="text/x-code">// Effect<string, "too small">
+const total = Effect.succeed(20).pipe(
+  Effect.map((n) => n * 2),
+  Effect.tap((n) => Console.log("doubled", n)),
+  Effect.flatMap((n) =>
+    n > 30
+      ? Effect.succeed(n)
+      : Effect.fail("too small" as const)),
+  Effect.andThen((n) =>
+    Effect.succeed(`total = ${n}`)),
+)</script>
+</div>
+<div>
+<p><b>Effect.gen</b>: reads like async/await. <code>yield*</code> unwraps an Effect, and a failure exits early the way <code>throw</code> would.</p>
+<script type="text/x-code">// Effect<number, "too big">
+const program = Effect.gen(function* () {
+  const x = yield* Effect.succeed(1)
+  const y = yield* Effect.succeed(2)
+  if (x + y > 10) {
+    return yield* Effect.fail("too big" as const)
+  }
+  return x + y
+})</script>
+</div>
+</div>
+<table>
+  <tr><th>Operator</th><th>Function returns</th><th>Use for</th></tr>
+  <tr><td><code>Effect.map</code></td><td>a plain value</td><td>transforming the result</td></tr>
+  <tr><td><code>Effect.flatMap</code> / <code>andThen</code></td><td>an Effect</td><td>sequencing a dependent step</td></tr>
+  <tr><td><code>Effect.tap</code></td><td>an Effect (its result is ignored)</td><td>logging and side effects</td></tr>
+  <tr><td><code>Effect.as(v)</code></td><td>n/a</td><td>replacing the result with a constant</td></tr>
+  <tr><td><code>Effect.all</code> / <code>Effect.forEach</code></td><td>n/a</td><td>many effects, optionally <code>{ concurrency: n }</code></td></tr>
+</table>
+<script type="text/x-code">Effect.forEach([1, 2, 3], (n) => Effect.succeed(n * 2), { concurrency: 2 })   // → [2, 4, 6]
+Effect.all({ user: getUser, count: getCount })                                  // → { user, count }</script>
+
+<h3 id="bs-fn">Effect.fn: write functions that return Effects</h3>
+<p>This is the recommended way to define functions in app code. You get a named span for tracing and stack traces that point to the call site. The optional second argument applies policies like retries or timeouts to the whole function.</p>
+<script type="text/x-code">const divide = Effect.fn("divide")(
+  function* (a: number, b: number) {
+    if (b === 0) return yield* Effect.fail("DivideByZero" as const)
+    return a / b
+  },
+  flow(Effect.timeout("1 second"), Effect.retry(Schedule.recurs(2))),
+)
+// divide: (a: number, b: number) => Effect<number, "DivideByZero" | TimeoutError></script>
+
+<h3 id="bs-run">Running: only at the edge of your program</h3>
+<div class="flow">
+  <span class="pill">build a description</span><span class="arrow">→</span>
+  <span class="pill">compose it</span><span class="arrow">→</span>
+  <span class="pill">provide services (R = never)</span><span class="arrow">→</span>
+  <span class="pill" style="color:var(--ok);border-color:#2c5a40">run it once</span>
+</div>
+<table>
+  <tr><th>Runner</th><th>Returns</th><th>On failure</th></tr>
+  <tr><td><code>Effect.runPromise</code></td><td><code>Promise&lt;A&gt;</code></td><td>the Promise rejects</td></tr>
+  <tr><td><code>Effect.runPromiseExit</code></td><td><code>Promise&lt;Exit&lt;A, E&gt;&gt;</code></td><td>never rejects; inspect the Exit</td></tr>
+  <tr><td><code>Effect.runSync</code></td><td><code>A</code></td><td>throws (also throws if the effect is async)</td></tr>
+  <tr><td><code>Effect.runSyncExit</code></td><td><code>Exit&lt;A, E&gt;</code></td><td>never throws</td></tr>
+  <tr><td><code>Effect.runFork</code></td><td><code>Fiber</code></td><td>observe it or interrupt it later</td></tr>
+</table>
+<div class="log">Output: runPromise(divide(10, 2)) → <b>5</b> · runSyncExit(divide(1, 0))._tag → <b>Failure</b> · runPromise(divide(1, 0)) → <b>rejected: DivideByZero</b></div>
+
+<h3 id="bs-data">Data types you'll use everywhere</h3>
+<script type="text/x-code">import { Match, Option, pipe, Result } from "effect"
+
+// Option: a value that may be missing (instead of null / undefined)
+const maybe = Option.fromNullishOr(map.get("b"))    // Option<number>
+Option.getOrElse(maybe, () => 0)
+
+// Result: success or failure as a plain value (v3 called this Either)
+const r = Result.succeed(1)
+Result.isSuccess(r)                                  // true
+
+// Match: exhaustive pattern matching on tagged unions
+type Shape = { _tag: "Circle"; r: number } | { _tag: "Square"; s: number }
+const area = (s: Shape) => Match.value(s).pipe(
+  Match.tag("Circle", ({ r }) => Math.PI * r * r),
+  Match.tag("Square", ({ s }) => s * s),
+  Match.exhaustive,                                  // a compile error if you miss a case
+)
+
+// pipe: plain function composition, also works outside Effect
+pipe(1, (n) => n + 1, (n) => n * 10)                 // 20</script>
+<div class="card try">
+  <h4>Try it · <code>exercises/00-basics.ts</code></h4>
+  <ul><li><code>parseJson</code>: <code>Effect.try</code> with a typed <code>"BadJson"</code> error</li><li><code>divide</code>: an <code>Effect.fn</code> that fails with <code>"DivideByZero"</code></li><li><code>averageOf</code>: combine both in <code>Effect.gen</code> and check that E is the union</li></ul>
+  <p>Replace each <code>todo()</code>, then run <code>bun run test 00</code>. Type assertions count as tests, so a wrong <code>E</code> or <code>R</code> fails too.</p>
+  <details><summary>Solution</summary>
+<script type="text/x-code">import { Effect } from "effect"
+
+// 1. Wrap JSON.parse so a bad input becomes the typed error "BadJson" instead of a throw.
+//    Expected type: Effect<unknown, "BadJson">
+export const parseJson = (text: string) =>
+  Effect.try({
+    try: (): unknown => JSON.parse(text),
+    catch: () => "BadJson" as const,
+  })
+
+// 2. Use Effect.fn("divide") to divide a by b, failing with "DivideByZero" when b is 0.
+//    Expected type: (a: number, b: number) => Effect<number, "DivideByZero">
+export const divide = Effect.fn("divide")(function* (a: number, b: number) {
+  if (b === 0) return yield* Effect.fail("DivideByZero" as const)
+  return a / b
+})
+
+// 3. Sum two parsed numbers with Effect.gen: parse both texts, then divide the sum by `by`.
+//    Errors from both helpers must show up in E.
+//    Expected type: Effect<number, "BadJson" | "DivideByZero">
+export const averageOf = (x: string, y: string, by: number) =>
+  Effect.gen(function* () {
+    const a = Number(yield* parseJson(x))
+    const b = Number(yield* parseJson(y))
+    return yield* divide(a + b, by)
+  })</script>
+  </details>
+</div>
+<p>Next: section 1 explains <i>how</i> the runtime executes these descriptions.</p>
+</section>
+
+<!-- ============================ 1 RUNTIME ============================ -->
+<section id="runtime">
+<h2><span class="num">1</span>Runtime &amp; fibers</h2>
+<p class="lead">An <code>Effect</code> is a value that describes work. The runtime executes it on a <b>fiber</b>, a lightweight green thread. Fibers form a tree, and that tree is what makes cancellation and cleanup automatic.</p>
+
+<h3 id="rt-fibers">Structured concurrency: the fiber tree</h3>
+<div class="grid2">
+  <div class="card tree">
+    <div class="node acc">main fiber · runPromise(program)</div>
+    <div class="children">
+      <div class="node ok">forkChild(worker "fast") → joined ✓</div><br>
+      <div class="node bad">forkChild(worker "slow") → interrupted</div>
+    </div>
+    <p style="font-family:var(--sans);color:var(--muted);font-size:13px;margin-top:10px">When a parent fiber ends, the runtime interrupts any children that are still running. A child fiber can't outlive its parent and leak.</p>
+  </div>
+  <div class="card">
+    <h4>Fork variants</h4>
+    <table>
+      <tr><td><code>Effect.forkChild</code></td><td>child of the current fiber (default)</td></tr>
+      <tr><td><code>Effect.forkScoped</code></td><td>lives until the enclosing <code>Scope</code> closes</td></tr>
+      <tr><td><code>Effect.forkIn(scope)</code></td><td>attached to a specific scope</td></tr>
+      <tr><td><code>Effect.forkDetach</code></td><td>daemon fiber, not tied to a parent (use rarely)</td></tr>
+      <tr><td><code>Effect.runFork</code></td><td>start from outside Effect, returns a <code>Fiber</code></td></tr>
+    </table>
+  </div>
+</div>
+<script type="text/x-code">import { Duration, Effect, Fiber } from "effect"
+
+const worker = (name: string, ms: number) =>
+  Effect.gen(function* () {
+    yield* Effect.sleep(Duration.millis(ms))
+    return name
+  }).pipe(
+    Effect.onInterrupt(() => Effect.log(`${name} interrupted`)),
+    Effect.ensuring(Effect.log(`${name} cleanup`)),   // runs on success, failure AND interrupt
+  )
+
+const program = Effect.gen(function* () {
+  const fast = yield* Effect.forkChild(worker("fast", 50))
+  yield* Effect.forkChild(worker("slow", 10_000))     // never joined
+  return yield* Fiber.join(fast)                      // parent returns → "slow" is interrupted
+})</script>
+<div class="log">Output from running this with bun:<br>
+INFO (#2): <b>fast cleanup</b><br>
+INFO (#3): <b>slow interrupted</b><br>
+INFO (#3): <b>slow cleanup</b><br>
+result: fast</div>
+
+<h3 id="rt-exit">Exit and Cause: the result of running a fiber</h3>
+<div class="tree card">
+  <div class="node acc">Exit&lt;A, E&gt;</div>
+  <div class="children">
+    <div class="node ok">Success(value: A)</div><br>
+    <div class="node bad">Failure(cause: Cause&lt;E&gt;)</div>
+    <div class="children">
+      <span style="color:var(--muted)">cause.reasons: ReadonlyArray&lt;Reason&lt;E&gt;&gt;</span><br>
+      <div class="node warn">Fail(error: E)</div> <span style="color:var(--muted)">expected error, typed in E</span><br>
+      <div class="node bad">Die(defect: unknown)</div> <span style="color:var(--muted)">bug: a thrown exception or orDie</span><br>
+      <div class="node">Interrupt(fiberId)</div> <span style="color:var(--muted)">cancelled</span>
+    </div>
+  </div>
+</div>
+<p>A single failure can have <b>several reasons</b>. For example, the main error plus a finalizer that also crashed, or two parallel branches that both failed. That's why <code>Cause</code> holds a list rather than one error.</p>
+<script type="text/x-code">import { Cause, Effect, Exit } from "effect"
+
+const exit = await Effect.runPromiseExit(program)    // never rejects
+Exit.match(exit, {
+  onSuccess: (a) => console.log("ok", a),
+  onFailure: (cause) => console.error(Cause.pretty(cause)),  // full trace, all reasons
+})
+// Inside Effect: Effect.exit(eff) turns an Effect<A, E> into Effect<Exit<A, E>, never></script>
+
+<h3 id="rt-interrupt">Interruption is how cancellation works</h3>
+<div class="flow">
+  <span class="pill">Effect.timeout("2 seconds")</span><span class="arrow">·</span>
+  <span class="pill">Effect.race(a, b)</span><span class="arrow">·</span>
+  <span class="pill">Fiber.interrupt(f)</span><span class="arrow">·</span>
+  <span class="pill">parent ends</span>
+  <span class="arrow">→</span><span class="pill" style="border-color:#5a2c32;color:var(--bad)">target fiber gets Interrupt</span>
+  <span class="arrow">→</span><span class="pill" style="border-color:#2c5a40;color:var(--ok)">finalizers run (LIFO)</span>
+</div>
+<script type="text/x-code">const fastest = Effect.race(fromCache, fromNetwork)      // loser is interrupted
+const bounded = fromNetwork.pipe(Effect.timeout("2 seconds"))  // fails with Cause.TimeoutError
+
+// In a Vite page: cancel running work from a button
+const fiber = Effect.runFork(program)
+document.querySelector("#cancel")!.addEventListener("click", () => {
+  Effect.runFork(Fiber.interrupt(fiber))
+})</script>
+<div class="note">Interruption is checked between steps. A plain JS <code>await</code> inside <code>tryPromise</code> keeps running unless you pass the provided <code>AbortSignal</code> along: <code>try: (signal) =&gt; fetch(url, { signal })</code>. Use <code>Effect.uninterruptible</code> for critical sections that must finish.</div>
+
+<h3 id="rt-resources">Resources: acquireRelease + Scope</h3>
+<script type="text/x-code">const openSocket = (url: string) =>
+  Effect.acquireRelease(
+    Effect.sync(() => new WebSocket(url)),       // acquire (uninterruptible)
+    (ws) => Effect.sync(() => ws.close()),       // release: guaranteed
+  )                                              // Effect<WebSocket, never, Scope>
+
+const useSocket = Effect.scoped(                 // Scope is created here and closed at the end
+  Effect.gen(function* () {
+    const ws = yield* openSocket("wss://example.com")
+    ws.send("hello")
+  }),                                            // ws.close() runs here on success, error or interrupt
+)</script>
+<table>
+  <tr><th>Finalizer</th><th>When it runs</th></tr>
+  <tr><td><code>Effect.ensuring(fin)</code></td><td>always</td></tr>
+  <tr><td><code>Effect.onExit(f)</code></td><td>always, receives the <code>Exit</code></td></tr>
+  <tr><td><code>Effect.onInterrupt(f)</code></td><td>only on interruption</td></tr>
+  <tr><td><code>Effect.addFinalizer(f)</code></td><td>when the current <code>Scope</code> closes</td></tr>
+</table>
+<div class="card try">
+  <h4>Try it · <code>exercises/01-runtime.ts</code></h4>
+  <ul><li><code>worker</code>: <code>onInterrupt</code> + <code>ensuring</code></li><li><code>fastest</code>: <code>Effect.race</code>, and check that the loser runs its cleanup</li><li><code>withConnection</code>: <code>acquireRelease</code> + <code>scoped</code>, released even on failure</li></ul>
+  <p>Replace each <code>todo()</code>, then run <code>bun run test 01</code>. Type assertions count as tests, so a wrong <code>E</code> or <code>R</code> fails too.</p>
+  <details><summary>Solution</summary>
+<script type="text/x-code">import { Effect } from "effect"
+
+// 1. Make a worker that sleeps `ms` milliseconds and returns `name`.
+//    Push `${name} interrupted` to `log` if it gets interrupted, and `${name} cleanup` on ANY exit.
+//    Expected type: Effect<string>
+export const worker = (name: string, ms: number, log: Array<string>) =>
+  Effect.sleep(ms).pipe(
+    Effect.as(name),
+    Effect.onInterrupt(() => Effect.sync(() => log.push(`${name} interrupted`))),
+    Effect.ensuring(Effect.sync(() => log.push(`${name} cleanup`))),
+  )
+
+// 2. Run both workers at the same time and return the name of whichever finishes first.
+//    The loser must be interrupted (and so run its cleanup).
+//    Expected type: Effect<string>
+export const fastest = (log: Array<string>) =>
+  Effect.race(worker("fast", 10, log), worker("slow", 1_000, log))
+
+// 3. Model a connection with acquireRelease: acquiring pushes "open", releasing pushes "close".
+//    `withConnection(use)` must close the connection even when `use` fails.
+//    Expected type: <A, E>(use: Effect<A, E>) => Effect<A, E>
+export const withConnection = <A, E>(use: Effect.Effect<A, E>, log: Array<string>) =>
+  Effect.scoped(
+    Effect.acquireRelease(
+      Effect.sync(() => log.push("open")),
+      () => Effect.sync(() => log.push("close")),
+    ).pipe(Effect.andThen(use)),
+  )</script>
+  </details>
+</div>
+</section>
+
+<!-- ============================ 2 ERRORS ============================ -->
+<section id="errors">
+<h2><span class="num">2</span>Errors in depth</h2>
+<p class="lead">The rule: if a caller can do something about a failure, make it a <b>typed error in E</b>. If it's a bug or a broken invariant, let it become a <b>defect</b>, and handle defects once at the edge of the app.</p>
+
+<h3 id="er-model">Modeling errors</h3>
+<script type="text/x-code">import { Data, Effect, Schema } from "effect"
+
+// Schema-backed: serializable (can cross HTTP), validated. Preferred for domain errors.
+class NotFound extends Schema.TaggedError<NotFound>()("NotFound", { id: Schema.String }) {}
+
+// Data-backed: lightweight, not serializable. Fine for internal errors.
+class Unauthorized extends Data.TaggedError("Unauthorized")<{}> {}
+
+// Wrapping unknown 3rd-party errors: Schema.Defect() makes any thrown value serializable
+class ApiError extends Schema.TaggedError<ApiError>()("ApiError", {
+  url: Schema.String,
+  error: Schema.Defect(),
+}) {}
+
+const getUser = Effect.fn("getUser")(function* (id: string) {
+  if (id === "") return yield* new NotFound({ id })      // tagged errors are yieldable
+  if (id === "admin") return yield* new Unauthorized()
+  const user: User = yield* Effect.tryPromise({
+    try: () => fetch(`/api/users/${id}`).then((r) => r.json()),
+    catch: (error) => new ApiError({ url: `/api/users/${id}`, error }),
+  })
+  return user
+})
+// getUser: (id: string) => Effect<User, NotFound | Unauthorized | ApiError></script>
+
+<h3 id="er-handle">Handling: each handler removes errors from E</h3>
+<div class="flow">
+  <span class="pill">E = NotFound | Unauthorized | ApiError</span>
+  <span class="arrow">→ catchTag("NotFound") →</span>
+  <span class="pill">E = Unauthorized | ApiError</span>
+  <span class="arrow">→ catch →</span>
+  <span class="pill" style="color:var(--ok);border-color:#2c5a40">E = never</span>
+</div>
+<table>
+  <tr><th>API</th><th>Handles</th><th>Use for</th></tr>
+  <tr><td><code>Effect.catchTag("X", f)</code></td><td>one tag</td><td>the usual case</td></tr>
+  <tr><td><code>Effect.catchTags({ X: f, Y: g })</code></td><td>several tags</td><td>mapping errors at a boundary</td></tr>
+  <tr><td><code>Effect.catch(f)</code></td><td>all of E</td><td>fallbacks (named <code>catchAll</code> in v3)</td></tr>
+  <tr><td><code>Effect.catchIf(pred, f)</code></td><td>E matching a predicate</td><td>status-code style checks</td></tr>
+  <tr><td><code>Effect.mapError(f)</code></td><td>transforms E</td><td>converting to a domain error</td></tr>
+  <tr><td><code>Effect.tapError(f)</code></td><td>observe only</td><td>logging</td></tr>
+  <tr><td><code>Effect.orDie</code></td><td>E → defect</td><td>"this can't happen here"</td></tr>
+  <tr><td><code>Effect.catchCause(f)</code></td><td>full Cause (fail + die + interrupt)</td><td>top-level reporting</td></tr>
+  <tr><td><code>Effect.catchDefect(f)</code></td><td>only defects</td><td>plugin sandboxes; rarely needed</td></tr>
+  <tr><td><code>Effect.result</code> / <code>Effect.exit</code></td><td>moves E into the success value</td><td>branching on the outcome as data</td></tr>
+</table>
+<script type="text/x-code">getUser("1").pipe(
+  Effect.catchTags({
+    NotFound: () => Effect.succeed(null),
+    Unauthorized: () => Effect.succeed(null),
+  }),
+)                                                   // E = ApiError
+
+getUser("1").pipe(
+  Effect.catchCause((cause) =>
+    Cause.hasInterrupts(cause)
+      ? Effect.succeed(null)
+      : Effect.logError(Cause.pretty(cause)).pipe(Effect.as(null)),
+  ),
+)</script>
+
+<h3 id="er-accum">Accumulating instead of failing fast</h3>
+<p>By default <code>Effect.all</code> stops at the first failure. Use these to get every outcome instead:</p>
+<script type="text/x-code">const ids = ["1", "2", ""]
+
+// Every outcome as a Result
+const results = yield* Effect.all(ids.map(getUser), { concurrency: 5, mode: "result" })
+// → [{ _tag: "Success", value }, { _tag: "Failure", failure }]
+
+// Split into [successes, failures]; never fails
+const [users, failures] = yield* Effect.partition(ids, getUser)</script>
+<div class="log">Output: partition(["a", "", "b"], f) → <b>[["A","B"], [{"id":"","_tag":"Bad"}]]</b></div>
+<div class="card try">
+  <h4>Try it · <code>exercises/02-errors.ts</code></h4>
+  <ul><li><code>NotFound</code>: a <code>Schema.TaggedError</code></li><li><code>findUser</code>: yield the error directly</li><li><code>findUserOrAnonymous</code>: <code>catchTag</code> until E = never</li><li><code>findAll</code>: <code>Effect.partition</code> instead of failing fast</li></ul>
+  <p>Replace each <code>todo()</code>, then run <code>bun run test 02</code>. Type assertions count as tests, so a wrong <code>E</code> or <code>R</code> fails too.</p>
+  <details><summary>Solution</summary>
+<script type="text/x-code">import { Effect, Schema } from "effect"
+
+const users: Record<string, string> = { "1": "Ada", "2": "Grace" }
+
+// 1. Declare a Schema-backed tagged error "NotFound" with an `id: string` field.
+export class NotFound extends Schema.TaggedError<NotFound>()("NotFound", { id: Schema.String }) {}
+
+// 2. Look a user's name up in `users`, failing with NotFound when it is missing.
+//    Expected type: (id: string) => Effect<string, NotFound>
+export const findUser = Effect.fn("findUser")(function* (id: string) {
+  const name = users[id]
+  if (name === undefined) return yield* new NotFound({ id })
+  return name
+})
+
+// 3. Recover from NotFound with "anonymous" so the error channel becomes `never`.
+//    Expected type: (id: string) => Effect<string>
+export const findUserOrAnonymous = (id: string) =>
+  findUser(id).pipe(Effect.catchTag("NotFound", () => Effect.succeed("anonymous")))
+
+// 4. Look up every id without stopping at the first failure.
+//    Return [names found, ids that were missing].
+//    Expected type: (ids: Array<string>) => Effect<[Array<string>, Array<string>]>
+export const findAll = (ids: Array<string>) =>
+  Effect.partition(ids, findUser).pipe(
+    Effect.map(([names, errors]): [Array<string>, Array<string>] => [names, errors.map((e) => e.id)]),
+  )</script>
+  </details>
+</div>
+</section>
+
+<!-- ============================ 3 LAYERS ============================ -->
+<section id="layers">
+<h2><span class="num">3</span>Services &amp; Layers</h2>
+<p class="lead">A <b>service</b> is an interface with a unique key. A <b>layer</b> is a recipe that builds the service. It can depend on other services, acquire resources, and fail. The <code>R</code> type parameter lists services a program still needs. You can only run a program once <code>R = never</code>.</p>
+
+<h3 id="ly-service">The idiomatic shape (effect-solutions style)</h3>
+<script type="text/x-code">import { Context, Effect, Layer, Schema } from "effect"
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http"
+
+class Config extends Context.Service<Config, { readonly apiUrl: string }>()("@app/Config") {
+  static readonly layer = Layer.succeed(Config, { apiUrl: "/api" })
+}
+
+class Users extends Context.Service<Users, {
+  readonly findById: (id: UserId) => Effect.Effect<User, unknown>   // methods have R = never
+}>()("@app/Users") {
+  static readonly layer = Layer.effect(
+    Users,
+    Effect.gen(function* () {
+      const config = yield* Config                       // dependencies go into the LAYER's R,
+      const http = (yield* HttpClient.HttpClient)        // not into each method's R
+        .pipe(HttpClient.filterStatusOk)
+      const findById = Effect.fn("Users.findById")(function* (id: UserId) {
+        const res = yield* http.get(`${config.apiUrl}/users/${id}`)
+        return yield* HttpClientResponse.schemaBodyJson(User)(res)
+      })
+      return { findById }
+    }),
+  )                                    // Layer<Users, never, Config | HttpClient>
+
+  static readonly testLayer = Layer.succeed(Users, {
+    findById: (id) => Effect.succeed(new User({ id, name: "Ada" })),
+  })
+}</script>
+<div class="grid2">
+  <div class="card"><h4>Constructors</h4>
+    <code>Layer.succeed</code> value · <code>Layer.sync</code> lazy value · <code>Layer.effect</code> effectful (and scoped: <code>acquireRelease</code> inside it ties the resource's lifetime to the layer) · <code>Layer.effectDiscard</code> run something on startup, provide nothing</div>
+  <div class="card"><h4>Composition</h4>
+    <code>Layer.provide(dep)</code> feeds a dependency and hides it · <code>Layer.provideMerge(dep)</code> feeds it and also exposes it · <code>Layer.mergeAll(a, b, c)</code> side by side · <code>Layer.fresh</code> opts out of sharing</div>
+</div>
+
+<h3 id="ly-graph">Graph &amp; memoization</h3>
+<div class="layers card">
+  <div class="layer-row"><div class="node acc">program · R = Users | Config</div></div>
+  <div class="vsep">▲ Effect.provide(AppLayer), once, at the edge</div>
+  <div class="layer-row"><div class="node">Users.layer · needs Config | HttpClient</div></div>
+  <div class="vsep">▲ fed by</div>
+  <div class="layer-row"><div class="node ok">Config.layer · provideMerge (also exposed)</div><div class="node">FetchHttpClient.layer · provide (hidden)</div></div>
+</div>
+<script type="text/x-code">export const AppLayer = Users.layer.pipe(
+  Layer.provideMerge(Config.layer),        // Users needs Config, and the program also wants Config
+  Layer.provide(FetchHttpClient.layer),    // HttpClient is used internally only
+)                                          // Layer<Users | Config, never, never></script>
+<div class="note"><b>Memoization is by reference.</b> If the same layer <i>object</i> appears twice in a graph, it's built once. A function that <i>returns</i> a new layer (<code>Postgres.layer({ url })</code>) creates a new reference on every call, which means two connection pools. Assign the result to a module-level constant and reuse that. Similarly, every separate <code>Effect.provide</code> call builds its own copy, so provide once at the top.</div>
+<script type="text/x-code">// Context.Reference: a service with a default, so it never appears in R
+const Verbose = Context.Reference<boolean>("@app/Verbose", { defaultValue: () => false })
+
+const loadUser = Effect.fn("loadUser")(function* (id: UserId) {
+  const users = yield* Users
+  if (yield* Verbose) yield* Effect.log("loading", id)
+  return yield* users.findById(id)
+})
+loadUser(id).pipe(Effect.provideService(Verbose, true))    // override locally</script>
+
+<h3 id="ly-runtime">ManagedRuntime: Effect inside a Vite app</h3>
+<p>A UI has many entry points, such as clicks, route loads and timers. Build the layers <b>once</b> into a runtime and run every entry point through it, so services like the HTTP client and caches are shared.</p>
+<script type="text/x-code">// src/runtime.ts
+import { ManagedRuntime } from "effect"
+export const AppRuntime = ManagedRuntime.make(AppLayer)   // builds the layers lazily, on first use
+
+// src/main.ts
+button.addEventListener("click", () => {
+  AppRuntime.runPromise(loadUser(UserId.make("1"))).then(render)
+})
+import.meta.hot?.dispose(() => AppRuntime.dispose())    // HMR: release scoped resources
+
+// tests: same program, swap the layer
+Effect.runPromise(loadUser(id).pipe(Effect.provide(Users.testLayer)))</script>
+<div class="card try">
+  <h4>Try it · <code>exercises/03-layers.ts</code></h4>
+  <ul><li><code>Greeter</code>: a <code>Context.Service</code> whose layer depends on <code>Config</code></li><li><code>program</code>: use the service; R = Greeter</li><li><code>MainLayer</code>: <code>Layer.provide</code> until R = never</li></ul>
+  <p>Replace each <code>todo()</code>, then run <code>bun run test 03</code>. Type assertions count as tests, so a wrong <code>E</code> or <code>R</code> fails too.</p>
+  <details><summary>Solution</summary>
+<script type="text/x-code">import { Context, Effect, Layer } from "effect"
+
+export class Config extends Context.Service<Config, { readonly greeting: string }>()("@exercises/Config") {
+  static readonly layer = Layer.succeed(Config, { greeting: "Hello" })
+}
+
+// 1. Declare a Greeter service whose shape is { greet: (name: string) => Effect<string> }.
+//    Its `layer` reads Config and returns `${greeting}, ${name}!`.
+//    Expected layer type: Layer<Greeter, never, Config>
+export class Greeter extends Context.Service<Greeter, {
+  readonly greet: (name: string) => Effect.Effect<string>
+}>()("@exercises/Greeter") {
+  static readonly layer = Layer.effect(
+    Greeter,
+    Effect.gen(function* () {
+      const { greeting } = yield* Config
+      return { greet: (name: string) => Effect.succeed(`${greeting}, ${name}!`) }
+    }),
+  )
+}
+
+// 2. A program that greets "Ada" through the Greeter service.
+//    Expected type: Effect<string, never, Greeter>
+export const program = Effect.gen(function* () {
+  const greeter = yield* Greeter
+  return yield* greeter.greet("Ada")
+})
+
+// 3. Wire Greeter.layer with Config.layer so the program can run.
+//    Expected type: Layer<Greeter>
+export const MainLayer = Greeter.layer.pipe(Layer.provide(Config.layer))</script>
+  </details>
+</div>
+</section>
+
+<!-- ============================ 4 SCHEMA / STREAM / SCHEDULE ============================ -->
+<section id="sss">
+<h2><span class="num">4</span>Schema · Stream · Schedule</h2>
+
+<h3 id="ss-schema">Schema: one definition gives you a type, a validator and a codec</h3>
+<div class="split card">
+  <div><div class="node warn">Encoded</div><br><code>{ createdAt: "2026-01-01T…" }</code><br><span style="color:var(--muted);font-size:13px">JSON / wire / storage</span></div>
+  <div class="mid"><span class="h">decode →<br>← encode</span><span class="v">decode ↓ · ↑ encode</span></div>
+  <div><div class="node ok">Type</div><br><code>{ createdAt: Date }</code><br><span style="color:var(--muted);font-size:13px">what your code works with</span></div>
+</div>
+<script type="text/x-code">import { Schema } from "effect"
+
+const UserId = Schema.String.pipe(Schema.brand("UserId"))   // string that can't be mixed up with other strings
+type UserId = typeof UserId.Type
+
+class User extends Schema.Class<User>("User")({
+  id: UserId,
+  name: Schema.NonEmptyString,
+  age: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 150 })),   // refinement
+  createdAt: Schema.DateFromString,                          // transformation: string ⇄ Date
+  role: Schema.Literals(["admin", "member"]),
+  nickname: Schema.optional(Schema.String),
+}) {
+  get label() { return `${this.name} (${this.role})` }        // classes can have methods
+}
+
+Schema.decodeUnknownEffect(User)(json)    // Effect<User, SchemaError>
+Schema.decodeUnknownSync(User)(json)      // throws, for scripts and tests
+Schema.encodeEffect(User)(user)           // back to the wire shape
+Schema.fromJsonString(User)               // JSON.parse + decode as a single schema</script>
+<div class="log">Output: decodeUnknownSync(Struct({ age: Int }))({ age: "x" }) → <b>SchemaError(Expected number at ["age"])</b></div>
+<p>The same schemas plug into <code>HttpClientResponse.schemaBodyJson</code>, HttpApi endpoints, <code>Config</code> and Standard Schema (<code>toStandardSchemaV1</code>), so you define each shape once.</p>
+
+<h3 id="ss-stream">Stream: an Effect that emits many values</h3>
+<div class="flow">
+  <span class="pill">Effect&lt;A, E, R&gt;</span><span class="arrow">one value</span>
+  <span class="arrow">·</span>
+  <span class="pill">Stream&lt;A, E, R&gt;</span><span class="arrow">zero or more values, pulled lazily in chunks, with backpressure</span>
+</div>
+<div class="flow">
+  <span class="pill">source<br><small>fromEventListener · fromIterable · range · tick · callback · paginate · fromQueue</small></span>
+  <span class="arrow">→</span>
+  <span class="pill">operators<br><small>map · filter · mapEffect · debounce · throttle · changes · grouped · merge</small></span>
+  <span class="arrow">→</span>
+  <span class="pill">run<br><small>runForEach · runCollect · runDrain · runFold · runHead</small></span>
+</div>
+<script type="text/x-code">// Search-as-you-type in your Vite page
+const searches = Stream.fromEventListener<InputEvent>(input, "input").pipe(
+  Stream.map(() => input.value.trim()),
+  Stream.filter((q) => q.length > 1),
+  Stream.debounce("300 millis"),          // wait for typing to pause
+  Stream.changes,                         // skip repeats
+  Stream.mapEffect(search),               // effectful step (accepts { concurrency })
+  Stream.runForEach((results) => Effect.sync(() => render(results))),
+)                                         // an Effect: run it, and interrupt the fiber to stop listening
+
+// Bridge any callback API
+Stream.callback<number>((queue) => Effect.sync(() => { Queue.offerUnsafe(queue, 1); Queue.endUnsafe(queue) }))</script>
+
+<h3 id="ss-schedule">Schedule: a reusable policy for when to try again</h3>
+<p>A <code>Schedule</code> decides whether to continue and how long to wait before the next attempt. The same value works with <code>Effect.retry</code> (on failure), <code>Effect.repeat</code> (on success), <code>Effect.schedule</code> and <code>Stream.schedule</code>.</p>
+<div class="card">
+  <div style="font:12px var(--mono);color:var(--muted)">Schedule.max([Schedule.exponential("100 millis"), Schedule.recurs(5)]) delays (before jitter)</div>
+  <div class="timeline">
+    <div class="bar" style="height:6%"><span>100ms</span></div>
+    <div class="bar" style="height:12%"><span>200</span></div>
+    <div class="bar" style="height:25%"><span>400</span></div>
+    <div class="bar" style="height:50%"><span>800</span></div>
+    <div class="bar" style="height:100%"><span>1.6s</span></div>
+    <div style="flex:1;min-width:18px;text-align:center;color:var(--bad);font:11px var(--mono);align-self:center">stop</div>
+  </div>
+  <div class="tl-label"><div>retry 1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>recurs(5) limit</div></div>
+</div>
+<script type="text/x-code">import { Effect, Schedule } from "effect"
+
+const backoff = Schedule.max([                  // max = keep going only while BOTH continue (v3: Schedule.both)
+  Schedule.exponential("100 millis"),
+  Schedule.recurs(5),
+]).pipe(Schedule.jittered)                      // randomize delays so clients don't retry in sync
+
+const resilient = callApi.pipe(
+  Effect.timeout("2 seconds"),                  // timeout for each attempt
+  Effect.retry(backoff),
+  Effect.timeout("10 seconds"),                 // timeout for all attempts together
+)
+
+callApi.pipe(Effect.retry({ times: 3, while: (e) => e.message !== "fatal" }))  // options shorthand
+poll.pipe(Effect.repeat(Schedule.spaced("5 seconds")))                      // polling
+poll.pipe(Effect.schedule(Schedule.cron("0 9 * * 1-5")))                    // weekdays at 9:00</script>
+<table>
+  <tr><th>Building blocks</th><th>Combinators</th></tr>
+  <tr><td><code>recurs</code> <code>spaced</code> <code>fixed</code> <code>exponential</code> <code>fibonacci</code> <code>cron</code> <code>during</code> <code>windowed</code> <code>forever</code> <code>once</code></td>
+      <td><code>max([..])</code> both continue · <code>min([..])</code> either continues · <code>concat</code> one after another · <code>jittered</code> · <code>upTo</code> · <code>addDelay</code> / <code>modifyDelay</code> · <code>tap</code></td></tr>
+</table>
+<div class="card try">
+  <h4>Try it · <code>exercises/04-schema-stream-schedule.ts</code></h4>
+  <ul><li><code>Person</code>: refinements + <code>DateFromString</code></li><li><code>decodePerson</code>: <code>decodeUnknownEffect</code></li><li><code>evenSquares</code>: <code>Stream</code> filter, map, collect</li><li><code>retryThrice</code>: <code>Schedule.recurs</code>, 4 attempts in total</li></ul>
+  <p>Replace each <code>todo()</code>, then run <code>bun run test 04</code>. Type assertions count as tests, so a wrong <code>E</code> or <code>R</code> fails too.</p>
+  <details><summary>Solution</summary>
+<script type="text/x-code">import { Effect, Schedule, Schema, Stream } from "effect"
+
+// 1. A Person schema: non-empty `name`, integer `age` between 0 and 150,
+//    and `born` sent over the wire as an ISO string but decoded to a Date.
+export const Person = Schema.Struct({
+  name: Schema.NonEmptyString,
+  age: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 150 })),
+  born: Schema.DateFromString,
+})
+
+// 2. Decode unknown input into a Person.
+//    Expected type: (input: unknown) => Effect<typeof Person.Type, Schema.SchemaError>
+export const decodePerson = (input: unknown) => Schema.decodeUnknownEffect(Person)(input)
+
+// 3. From the numbers 1..10, keep the even ones, square them, and collect them into an array.
+//    Expected type: Effect<Array<number>>
+export const evenSquares = Stream.range(1, 10).pipe(
+  Stream.filter((n) => n % 2 === 0),
+  Stream.map((n) => n * n),
+  Stream.runCollect,
+)
+
+// 4. Retry `effect` at most 3 more times (4 attempts total) with no delay between attempts.
+//    Expected type: <A, E>(effect: Effect<A, E>) => Effect<A, E>
+export const retryThrice = <A, E>(effect: Effect.Effect<A, E>) =>
+  effect.pipe(Effect.retry(Schedule.recurs(3)))</script>
+  </details>
+</div>
+</section>
+
+<!-- ============================ 5 HTTP ============================ -->
+<section id="http">
+<h2><span class="num">5</span>Platform: <code>effect/http</code> &amp; <code>effect/http-api</code></h2>
+
+<h3 id="ht-client">HttpClient: fetch as a service</h3>
+<p><code>HttpClient</code> is a service, so you can swap it in tests and decorate it with retries, base URLs or auth headers. In the browser, provide it with <code>FetchHttpClient.layer</code>.</p>
+<script type="text/x-code">import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http"
+
+const getUser = Effect.fn("getUser")(function* (id: string) {
+  const client = (yield* HttpClient.HttpClient).pipe(
+    HttpClient.filterStatusOk,                 // non-2xx → HttpClientError
+    HttpClient.retryTransient({ times: 3 }),   // retries transient errors: rate limits, timeouts, network
+  )
+  const res = yield* client.get(`/api/users/${id}`)
+  return yield* HttpClientResponse.schemaBodyJson(User)(res)   // decode with Schema
+})
+
+getUser("1").pipe(Effect.provide(FetchHttpClient.layer))</script>
+
+<h3 id="ht-api">HttpApi: one spec for server, client and OpenAPI</h3>
+<div class="layers card">
+  <div class="layer-row"><div class="node acc">shared/api.ts · HttpApi.make("Api") with groups and endpoints, all described by Schemas</div></div>
+  <div class="layer-row">
+    <div class="node ok">server · HttpApiBuilder.group → handlers</div>
+    <div class="node ok">browser · HttpApiClient.make(Api) → typed client</div>
+    <div class="node">docs · OpenApi / HttpApiScalar / HttpApiSwagger</div>
+  </div>
+</div>
+<script type="text/x-code">import { HttpApi, HttpApiBuilder, HttpApiClient, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api"
+
+// shared: the contract
+export const Api = HttpApi.make("Api").add(
+  HttpApiGroup.make("users").add(
+    HttpApiEndpoint.get("getUser", "/users/:id", {
+      params: { id: Schema.String },
+      success: User,
+      error: NotFound.pipe(HttpApiSchema.status(404)),   // a typed error with an HTTP status
+    }),
+  ),
+)
+
+// server: implement each endpoint (missing handlers are a type error)
+const UsersLive = HttpApiBuilder.group(Api, "users", (handlers) =>
+  handlers.handle("getUser", ({ params }) =>
+    params.id === "1"
+      ? Effect.succeed(new User({ id: "1", name: "Ada" }))
+      : Effect.fail(new NotFound({ id: params.id })),
+  ),
+)
+const ApiLive = HttpApiBuilder.layer(Api).pipe(Layer.provide(UsersLive))
+
+// browser (your Vite app): a derived client; no fetch code, no manual types
+const program = Effect.gen(function* () {
+  const client = yield* HttpApiClient.make(Api, { baseUrl: "/api" })
+  return yield* client.users.getUser({ params: { id: "1" } })   // Effect<User, NotFound | HttpClientError | …>
+}).pipe(Effect.provide(FetchHttpClient.layer))</script>
+<div class="note">To serve <code>ApiLive</code> you also need an <code>HttpServer</code> implementation for your runtime, such as the Node or Bun platform packages. <code>effect</code> core provides only the router and the API definition. Because this repo is browser-only (Vite), <b>HttpApiClient</b> and <b>HttpClient</b> are the parts you can use right now.</div>
+<div class="card try">
+  <h4>Try it · <code>exercises/05-http.ts</code></h4>
+  <ul><li><code>getTodo</code>: <code>HttpClient</code> + <code>filterStatusOk</code> + <code>schemaBodyJson</code></li><li><code>titleOrMissing</code>: recover from every error. The tests swap in a fake <code>fetch</code> through <code>FetchHttpClient.Fetch</code></li></ul>
+  <p>Replace each <code>todo()</code>, then run <code>bun run test 05</code>. Type assertions count as tests, so a wrong <code>E</code> or <code>R</code> fails too.</p>
+  <details><summary>Solution</summary>
+<script type="text/x-code">import { Effect, Schema } from "effect"
+import { HttpClient, HttpClientResponse } from "effect/http"
+
+export const Todo = Schema.Struct({ id: Schema.Number, title: Schema.String, done: Schema.Boolean })
+
+// 1. GET `/todos/${id}` with the HttpClient service, treat non-2xx responses as errors,
+//    and decode the JSON body with the Todo schema.
+//    Expected R: HttpClient.HttpClient (provided by the caller, e.g. FetchHttpClient.layer)
+export const getTodo = Effect.fn("getTodo")(function* (id: number) {
+  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk)
+  const res = yield* client.get(`https://example.test/todos/${id}`)
+  return yield* HttpClientResponse.schemaBodyJson(Todo)(res)
+})
+
+// 2. Return the todo's title, or "missing" if the request or the decoding fails for any reason.
+//    Expected type: (id: number) => Effect<string, never, HttpClient.HttpClient>
+export const titleOrMissing = (id: number) =>
+  getTodo(id).pipe(
+    Effect.map((todo) => todo.title),
+    Effect.catch(() => Effect.succeed("missing")),
+  )</script>
+  </details>
+</div>
+</section>
+
+<!-- ============================ v4 GOTCHAS ============================ -->
+<section id="beta">
+<h2>v4 naming gotchas</h2>
+<p class="lead">Most blog posts use v3 names. The <code>effect-solutions</code> CLI is mostly v4 but was written for <code>4.0.0-beta.59</code>. These are the names that actually exist in your installed <code>4.0.0</code>:</p>
+<table>
+  <tr><th>You may read</th><th>Use in 4.0.0</th></tr>
+  <tr><td><code>Context.Tag</code> / <code>Effect.Service</code></td><td><code>Context.Service&lt;Self, Shape&gt;()("@app/Key")</code></td></tr>
+  <tr><td><code>Effect.catchAll</code></td><td><code>Effect.catch</code></td></tr>
+  <tr><td><code>Effect.catchAllDefect</code></td><td><code>Effect.catchDefect</code></td></tr>
+  <tr><td><code>Effect.either</code> / <code>Either</code></td><td><code>Effect.result</code> / <code>Result</code></td></tr>
+  <tr><td><code>Effect.fork</code> / <code>forkDaemon</code></td><td><code>Effect.forkChild</code> / <code>forkDetach</code></td></tr>
+  <tr><td><code>Layer.scoped</code></td><td><code>Layer.effect</code> (it handles scope itself)</td></tr>
+  <tr><td><code>Schema.TaggedErrorClass</code> (beta)</td><td><code>Schema.TaggedError</code></td></tr>
+  <tr><td><code>Schema.Defect</code> (beta, used as a value)</td><td><code>Schema.Defect()</code></td></tr>
+  <tr><td><code>Schedule.both</code> / <code>intersect</code></td><td><code>Schedule.max([a, b])</code></td></tr>
+  <tr><td><code>effect/unstable/http</code>, <code>@effect/platform</code></td><td><code>effect/http</code>, <code>effect/http-api</code></td></tr>
+  <tr><td><code>Effect.all(…, { mode: "either" })</code></td><td><code>{ mode: "result" }</code></td></tr>
+  <tr><td><code>Effect.andThen((n) =&gt; plainValue)</code></td><td><code>Effect.map</code>; <code>andThen</code> now needs an Effect</td></tr>
+</table>
+<p style="color:var(--muted)">For conventions, the effect-solutions docs are good reading: <code>bunx effect-solutions show basics services-and-layers error-handling data-modeling testing</code>. Translate any names using the table above.</p>
+</section>
+</main>
+</div>
+
+<script>
+  // minimal TS highlighter for <script type="text/x-code"> blocks
+  const RE = /(\/\/[^\n]*)|("(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`)|\b(import|from|export|const|let|class|extends|static|readonly|return|yield|function|new|if|type|await|async|true|false|null)\b|\b(Effect|Layer|Context|Schema|Stream|Schedule|Fiber|Exit|Cause|HttpClient|HttpApi\w*|ManagedRuntime)\b/g;
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  document.querySelectorAll('script[type="text/x-code"]').forEach((s) => {
+    const src = s.textContent.replace(/^\n/, "");
+    let out = "", last = 0;
+    for (const m of src.matchAll(RE)) {
+      out += esc(src.slice(last, m.index));
+      const cls = m[1] ? "tk-c" : m[2] ? "tk-s" : m[3] ? "tk-k" : "tk-e";
+      out += `<span class="${cls}">${esc(m[0])}</span>`;
+      last = m.index + m[0].length;
+    }
+    out += esc(src.slice(last));
+    const pre = document.createElement("pre");
+    pre.innerHTML = `<code>${out}</code>`;
+    s.replaceWith(pre);
+  });
+  // active nav link
+  const nav = document.querySelector("nav");
+  const links = [...nav.querySelectorAll("a")];
+  // keep the active link visible inside the sticky nav (no-op when the nav doesn't scroll)
+  const reveal = (a) => {
+    const n = nav.getBoundingClientRect(), r = a.getBoundingClientRect();
+    if (r.top < n.top) nav.scrollTop -= n.top - r.top;
+    else if (r.bottom > n.bottom) nav.scrollTop += r.bottom - n.bottom;
+  };
+  const setActive = (href) => links.forEach((a) => {
+    const on = a.getAttribute("href") === href;
+    a.classList.toggle("active", on);
+    if (on) { a.setAttribute("aria-current", "location"); reveal(a); } else a.removeAttribute("aria-current");
+  });
+  // a clicked link wins until the user scrolls; otherwise a nearby heading could steal the highlight
+  let pinned = false;
+  nav.addEventListener("click", (e) => {
+    const a = e.target.closest("a");
+    if (!a) return;
+    pinned = true;
+    setActive(a.getAttribute("href"));
+  });
+  const unpin = () => { pinned = false; };
+  addEventListener("wheel", unpin, { passive: true });
+  addEventListener("touchstart", unpin, { passive: true });
+  for (const ev of ["keydown", "pointerdown"]) {
+    addEventListener(ev, (e) => { if (!nav.contains(e.target)) unpin(); });
+  }
+  const obs = new IntersectionObserver((es) => es.forEach((e) => {
+    if (e.isIntersecting && !pinned) setActive("#" + e.target.id);
+  }), { rootMargin: "0px 0px -80% 0px" });
+  document.querySelectorAll("section[id], h3[id]").forEach((el) => obs.observe(el));
+</script>
+</body>
+</html>
